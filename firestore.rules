@@ -1,0 +1,42 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Admin = a document exists at admins/<uid>. Create it ONLY by hand in the Firebase console.
+    function isAdmin() {
+      return request.auth != null &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    // Nobody can write here from the app, so nobody can make themselves admin.
+    match /admins/{userId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow write: if false;
+    }
+
+    match /users/{userId} {
+      // Owner reads own profile; only admin can list/read everyone.
+      allow read: if request.auth != null && (request.auth.uid == userId || isAdmin());
+
+      // New accounts must start as free.
+      allow create: if request.auth != null
+        && request.auth.uid == userId
+        && request.resource.data.plan == 'free';
+
+      // Admin can change anything (grant/remove Pro).
+      // Normal users can update their own profile but NOT plan / proSince.
+      allow update: if request.auth != null && (
+        isAdmin() ||
+        (request.auth.uid == userId &&
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['plan', 'proSince']))
+      );
+
+      allow delete: if false;
+    }
+
+    // Each user's own food/workout data stays private (admin can't read it either).
+    match /userData/{userId}/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+  }
+}
